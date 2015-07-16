@@ -110,18 +110,18 @@ static struct cryptonight_gpu_ctx *d_ctx[8];
 extern bool opt_benchmark;
 
 extern void cryptonight_core_cpu_init(int thr_id, int threads);
-extern void cryptonight_core_cpu_hash(int thr_id, int blocks, int threads, uint32_t *d_long_state, struct cryptonight_gpu_ctx *d_ctx);
+extern void cryptonight_core_cpu_hash(int thr_id, int blocks, int threads, uint32_t *d_long_state, struct cryptonight_gpu_ctx *d_ctx, int light);
 
 extern void cryptonight_extra_cpu_setData(int thr_id, const void *data, const void *pTargetIn);
 extern void cryptonight_extra_cpu_init(int thr_id);
 extern void cryptonight_extra_cpu_prepare(int thr_id, int threads, uint32_t startNonce, struct cryptonight_gpu_ctx *d_ctx);
 extern void cryptonight_extra_cpu_final(int thr_id, int threads, uint32_t startNonce, uint32_t *nonce, struct cryptonight_gpu_ctx *d_ctx);
 
-extern "C" void cryptonight_hash(void* output, const void* input, size_t len);
+extern "C" void cryptonight_hash(void* output, const void* input, size_t len, int light);
 
 extern "C" int scanhash_cryptonight(int thr_id, uint32_t *pdata,
     const uint32_t *ptarget, uint32_t max_nonce,
-    unsigned long *hashes_done)
+    unsigned long *hashes_done, int light)
 {
     uint32_t *nonceptr = (uint32_t*)(((char*)pdata) + 39);
     const uint32_t first_nonce = *nonceptr;
@@ -134,7 +134,7 @@ extern "C" int scanhash_cryptonight(int thr_id, uint32_t *pdata,
     }
 	const uint32_t Htarg = ptarget[7];
 	const int throughput = cn_threads * cn_blocks;
-    const size_t alloc = MEMORY * throughput;
+    const size_t alloc = MEMORY * throughput / (light ? 2 : 1);
 
     static bool init[8] = { false, false, false, false, false, false, false, false };
 	if (!init[thr_id])
@@ -161,7 +161,7 @@ extern "C" int scanhash_cryptonight(int thr_id, uint32_t *pdata,
         uint32_t foundNonce = 0xFFFFFFFF;
 
         cryptonight_extra_cpu_prepare(thr_id, throughput, nonce, d_ctx[thr_id]);
-        cryptonight_core_cpu_hash(thr_id, cn_blocks, cn_threads, d_long_state[thr_id], d_ctx[thr_id]);
+        cryptonight_core_cpu_hash(thr_id, cn_blocks, cn_threads, d_long_state[thr_id], d_ctx[thr_id], light);
         cryptonight_extra_cpu_final(thr_id, throughput, nonce, &foundNonce, d_ctx[thr_id]);
 
         if (foundNonce < 0xffffffff)
@@ -171,7 +171,7 @@ extern "C" int scanhash_cryptonight(int thr_id, uint32_t *pdata,
             memcpy(tempdata, pdata, 76);
             uint32_t *tempnonceptr = (uint32_t*)(((char*)tempdata) + 39);
 			*tempnonceptr = foundNonce;
-			cryptonight_hash(vhash64, tempdata, 76);
+			cryptonight_hash(vhash64, tempdata, 76, light);
 
             if( (vhash64[7] <= Htarg) && fulltest(vhash64, ptarget) ) {
                 

@@ -62,7 +62,7 @@ int cuda_finddevice(char *name);
 }
 #endif
 
-extern void cryptonight_hash(void* output, const void* input, size_t len);
+extern void cryptonight_hash(void* output, const void* input, size_t len, int light);
 void parse_device_config( char *config, int *blocks, int *threads );
 
 #ifdef __linux /* Linux specific policy and affinity management */
@@ -136,7 +136,8 @@ typedef enum {
 	ALGO_NIST5,
 	ALGO_X11,
 	ALGO_X13,
-    ALGO_CRYPTONIGHT
+    ALGO_CRYPTONIGHT,
+    ALGO_CRYPTONIGHT_LIGHT
 } sha256_algos;
 
 static const char *algo_names[] = {
@@ -151,7 +152,8 @@ static const char *algo_names[] = {
 	"nist5",
 	"x11",
 	"x13",
-	"cryptonight"
+	"cryptonight",
+	"cryptonight-light"
 };
 
 bool opt_debug = false;
@@ -289,6 +291,7 @@ Options:\n\
 "\
       --benchmark       run in offline benchmark mode\n\
   -c, --config=FILE     load a JSON-format configuration file\n\
+  -A                    use Aeon cryptonight-light variant\n\
   -V, --version         display version information and exit\n\
   -h, --help            display this help text and exit\n\
 ";
@@ -300,7 +303,7 @@ static char const short_options[] =
 #ifdef HAVE_SYSLOG_H
 	"S"
 #endif
-	"a:c:Dhp:Px:qr:R:s:t:T:o:u:O:Vd:f:ml:";
+	"Aa:c:Dhp:Px:qr:R:s:t:T:o:u:O:Vd:f:ml:";
 
 static struct option const options[] = {
 	{ "algo", 1, NULL, 'a' },
@@ -596,7 +599,7 @@ static void share_result(int result, const char *reason)
 	result ? accepted_count++ : rejected_count++;
 	pthread_mutex_unlock(&stats_lock);
 	
-    if (opt_algo == ALGO_CRYPTONIGHT) {
+    if (opt_algo == ALGO_CRYPTONIGHT || opt_algo == ALGO_CRYPTONIGHT_LIGHT) {
         applog(LOG_INFO, "accepted: %lu/%lu (%.2f%%), %.2f H/s %s",
                 accepted_count, accepted_count + rejected_count,
                 100. * accepted_count / (accepted_count + rejected_count), hashrate,
@@ -637,7 +640,7 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
         if (jsonrpc_2) {
             noncestr = bin2hex(((const unsigned char*)work->data) + 39, 4);
             char hash[32];
-            cryptonight_hash((void *)hash, (const void *)work->data, 76);
+            cryptonight_hash((void *)hash, (const void *)work->data, 76, opt_algo == ALGO_CRYPTONIGHT_LIGHT);
             char *hashhex = bin2hex((const unsigned char *)hash, 32);
             snprintf(s, JSON_BUF_LEN,
                     "{\"method\": \"submit\", \"params\": {\"id\": \"%s\", \"job_id\": \"%s\", \"nonce\": \"%s\", \"result\": \"%s\"}, \"id\":1}\r\n",
@@ -676,7 +679,7 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
         if(jsonrpc_2) {
             char *noncestr = bin2hex(((const unsigned char*)work->data) + 39, 4);
             char hash[32];
-            cryptonight_hash((void *)hash, (const void *)work->data, 76);
+            cryptonight_hash((void *)hash, (const void *)work->data, 76, opt_algo == ALGO_CRYPTONIGHT_LIGHT);
             char *hashhex = bin2hex((const unsigned char *)hash, 32);
             snprintf(s, JSON_BUF_LEN,
                     "{\"method\": \"submit\", \"params\": {\"id\": \"%s\", \"job_id\": \"%s\", \"nonce\": \"%s\", \"result\": \"%s\"}, \"id\":1}\r\n",
@@ -1180,6 +1183,7 @@ static void *miner_thread(void *userdata)
                 case ALGO_JACKPOT:
                     max64 = 0x1fffLL; break;
                 case ALGO_CRYPTONIGHT:
+                case ALGO_CRYPTONIGHT_LIGHT:
                     max64 = 0x200LL; break;
                 default: 
                     max64 = 0xfffffLL; break;
@@ -1195,7 +1199,7 @@ static void *miner_thread(void *userdata)
 
 		/* scan nonces for a proof-of-work hash */
         rc = scanhash_cryptonight(thr_id, work.data, work.target,
-                              max_nonce, &hashes_done);
+                              max_nonce, &hashes_done, opt_algo == ALGO_CRYPTONIGHT_LIGHT);
 
 //        if (opt_benchmark)
 //            if (++rounds == 1) exit(0);
@@ -1211,7 +1215,7 @@ static void *miner_thread(void *userdata)
 		}
 		if (!opt_quiet) {
 			
-            if(opt_algo == ALGO_CRYPTONIGHT) {
+            if(opt_algo == ALGO_CRYPTONIGHT || opt_algo == ALGO_CRYPTONIGHT_LIGHT) {
                 applog(LOG_INFO, "GPU #%d: %s, %.2f H/s",
                     device_map[thr_id], device_name[thr_id], thr_hashrates[thr_id]);
             }
@@ -1228,7 +1232,7 @@ static void *miner_thread(void *userdata)
 				hashrate += thr_hashrates[i];
 			if (i == opt_n_threads) {
 			
-                if(opt_algo == ALGO_CRYPTONIGHT)
+                if(opt_algo == ALGO_CRYPTONIGHT || opt_algo == ALGO_CRYPTONIGHT_LIGHT)
                     applog(LOG_INFO, "Total: %.2f H/s", hashrate);
                 else {
                     sprintf(s, hashrate >= 1e6 ? "%.0f" : "%.2f", 1e-3 * hashrate);
@@ -1542,6 +1546,9 @@ static void parse_arg (int key, char *arg)
 	double d;
 
 	switch(key) {
+	case 'A':
+		opt_algo = ALGO_CRYPTONIGHT_LIGHT;
+		break;
 	case 'a':
         applog(LOG_INFO, "Ignoring algo switch, this program does only cryptonight now.");
 		break;
@@ -1931,7 +1938,7 @@ int main(int argc, char *argv[])
 
 	cuda_deviceinfo();
 
-    if(opt_algo == ALGO_CRYPTONIGHT) {
+    if(opt_algo == ALGO_CRYPTONIGHT || opt_algo == ALGO_CRYPTONIGHT_LIGHT) {
         jsonrpc_2 = true;
         applog(LOG_INFO, "Using JSON-RPC 2.0");
     }

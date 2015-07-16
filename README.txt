@@ -93,6 +93,7 @@ most of their command line interface and options.
  -B, --background      run the miner in the background
      --benchmark       run in offline benchmark mode
  -c, --config=FILE     load a JSON-format configuration file
+ -A                    Use Aeon cryptonight-light variant
  -V, --version         display version information and exit
  -h, --help            display this help text and exit
 
